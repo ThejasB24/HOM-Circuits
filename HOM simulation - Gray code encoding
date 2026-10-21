@@ -1,0 +1,70 @@
+HOM simulation - Gray code encoding
+
+
+import numpy as np
+from qiskit import QuantumCircuit, transpile
+from qiskit.quantum_info import SparsePauliOp, Operator, Pauli
+from qiskit.circuit.library import PauliEvolutionGate
+from qiskit.quantum_info import Operator
+from qiskit.visualization import plot_histogram
+from qiskit.synthesis import LieTrotter
+from qiskit_aer import AerSimulator
+from IPython.display import display, Math
+import matplotlib.pyplot as plt
+from qiskit_ibm_runtime.fake_provider import FakeMarrakesh
+%matplotlib inline
+
+X=Operator(Pauli("X")).data
+Y=Operator(Pauli("Y")).data
+Z=Operator(Pauli("Z")).data
+I=np.eye(2,dtype=complex)
+
+P_0=0.5*(I+Z)
+P_1=0.5*(I-Z)
+
+Q_0=0.5*(X+1j*Y)
+Q_1=0.5*(X-1j*Y)
+
+dag= np.kron(P_0,Q_1) + np.sqrt(2)* np.kron(Q_1,P_1)
+nor= np.kron(P_0,Q_0) + np.sqrt(2)* np.kron(Q_0,P_1)
+
+I4=np.eye(4,dtype=complex)
+
+bdag= np.kron(I4,dag)
+b=np.kron(I4,nor)
+
+adag= np.kron(dag,I4)
+a=np.kron(nor,I4)
+
+H=np.pi/4*(bdag@a + b@adag)
+
+H_P= SparsePauliOp.from_operator(Operator(H))
+H_P=H_P.simplify()
+print(H_P)
+
+
+def BScircuit(trotter_steps):
+    qc=QuantumCircuit(4,4)
+    qc.x(0)
+    qc.x(2)
+    evolution= PauliEvolutionGate(H_P,time=1,synthesis=LieTrotter(reps=trotter_steps),label="U_B")
+    qc.append(evolution,[0,1,2,3])
+    qc.measure(range(4),range(4))
+    return qc
+    
+
+#trotter_list=[1,5,10,14,18,20]
+trotter_list=[20]
+
+backend=AerSimulator()
+#backend=FakeMarrakesh()
+
+
+for n in trotter_list:
+    compiled_circuit=transpile(BScircuit(trotter_steps=n), backend)
+    job = backend.run(compiled_circuit, shots=10000)
+    
+    result = job.result()
+    counts = result.get_counts()
+    print(counts)     
+    plot_histogram(counts, title=f"Trotter steps={n}")
