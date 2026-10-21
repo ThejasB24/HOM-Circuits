@@ -1,0 +1,142 @@
+##HOM JW Dip with noise model
+
+
+import numpy as np
+from qiskit import QuantumCircuit, transpile
+from qiskit.quantum_info import SparsePauliOp, Operator, Pauli
+from qiskit.circuit.library import PauliEvolutionGate
+from qiskit.quantum_info import Operator
+from qiskit.visualization import plot_histogram
+from qiskit.synthesis import LieTrotter
+from qiskit_aer import AerSimulator
+from IPython.display import display, Math
+import matplotlib.pyplot as plt
+%matplotlib inline
+from qiskit import QuantumCircuit, transpile
+from qiskit.visualization import plot_histogram
+from qiskit_aer import AerSimulator
+from qiskit_aer.noise import NoiseModel, depolarizing_error, \
+    amplitude_damping_error, phase_damping_error, ReadoutError
+
+X=Operator(Pauli("X")).data
+Y=Operator(Pauli("Y")).data
+Z=Operator(Pauli("Z")).data
+I=np.eye(2,dtype=complex)
+
+sigma_plus=0.5*(X - 1j*Y)
+sigma_minus=0.5*(X + 1j*Y)
+
+n=8
+
+def creop(position):
+    ops=[Z]*position + [sigma_plus] + [I]*(n-position-1)
+    full=ops[0]
+    for o in ops[1:]:
+        full=np.kron(full,o)
+    return full
+
+def aniop(position):
+    ops=[Z]*position + [sigma_minus] + [I]*(n-position-1)
+    full=ops[0]
+    for o in ops[1:]:
+        full=np.kron(full,o)
+    return full
+    
+H=(np.pi/4)*(creop(0)@aniop(4) + creop(4)@aniop(0) +creop(1)@aniop(5) +creop(5)@aniop(1) 
+             +creop(2)@aniop(6) +creop(6)@aniop(2) +creop(3)@aniop(7) +creop(7)@aniop(3) )
+
+H_P= SparsePauliOp.from_operator(Operator(H))
+H_P=H_P.simplify()
+print(H_P)
+
+def initial_state(theta):
+    zeta=np.cos(theta/2)
+    xi= -np.sin(theta/2)
+    initial_op= (1/np.sqrt(2))*((zeta*(creop(0)@creop(6)- creop(2)@creop(4))+ xi*(creop(0)@creop(7)- creop(2)@creop(5))))
+    vac=np.zeros(2**n, dtype=complex)
+    vac[0]=1.0
+    statevec=initial_op@vac
+    return statevec
+
+def HOMdip_circuit(theta):
+    qc=QuantumCircuit(8,8)
+    qc.initialize(initial_state(theta),range(8))
+    qc.barrier()
+    evolution= PauliEvolutionGate(H_P,time=1,label="U_B")
+    qc.append(evolution,range(n))
+    qc.barrier()
+    qc.measure(range(n),range(n))
+    return qc
+
+def coincidence_probability(counts, shots):
+    total = 0
+    for bitstring, c in counts.items():
+        bits = bitstring[::-1]   
+        m1 = sum(int(b) for b in bits[0:4])
+        m2 = sum(int(b) for b in bits[4:8])
+        if m1 == 1 and m2 == 1:
+            total += c
+    return total / shots
+    
+
+relaxation_time   = 300e-6
+dephasing_time    = 200e-6
+
+single_qubit_gate_duration = 90e-9
+two_qubit_gate_duration    = 200e-9
+
+measurement_flip_prob = 0.0536
+two_qubit_depol_rate  = 0.00879
+
+noise_model = NoiseModel()
+
+gamma_1q  = 1 - np.exp(-single_qubit_gate_duration / relaxation_time)
+lambda_1q = 1 - np.exp(-single_qubit_gate_duration / dephasing_time)
+
+single_qubit_channel = (
+    amplitude_damping_error(gamma_1q)
+    .compose(phase_damping_error(lambda_1q))
+)
+noise_model.add_all_qubit_quantum_error(single_qubit_channel, ["h"])
+
+gamma_2q  = 1 - np.exp(-two_qubit_gate_duration / relaxation_time)
+lambda_2q = 1 - np.exp(-two_qubit_gate_duration / dephasing_time)
+
+thermal_2q = (
+    amplitude_damping_error(gamma_2q)
+    .tensor(amplitude_damping_error(gamma_2q))
+    .compose(
+        phase_damping_error(lambda_2q)
+        .tensor(phase_damping_error(lambda_2q))
+    )
+)
+noise_model.add_all_qubit_quantum_error(
+    depolarizing_error(two_qubit_depol_rate, 2).compose(thermal_2q), ["cx"]
+)
+
+confusion = [
+    [1 - measurement_flip_prob, measurement_flip_prob],
+    [measurement_flip_prob,     1 - measurement_flip_prob],
+]
+noise_model.add_all_qubit_readout_error(ReadoutError(confusion))
+
+backend = AerSimulator(noise_model=noise_model)
+
+
+shots=10000
+thetas=np.linspace(-np.pi,np.pi,100)
+coincidences=[]
+
+for theta in thetas:
+    qc=HOMdip_circuit(theta)
+    compiled=transpile(qc,backend)
+    job=backend.run(compiled, shots=shots)
+    result=job.result()
+    counts=result.get_counts()
+    coincidences.append(coincidence_probability(counts,shots))
+
+plt.plot(thetas, coincidences, 'o-')
+plt.xlabel("theta")
+plt.ylabel("Coincidence probability")
+plt.title("HOM dip")
+plt.show()
