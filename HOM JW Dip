@@ -1,0 +1,92 @@
+##HOM JW Dip
+
+import numpy as np
+from qiskit import QuantumCircuit, transpile
+from qiskit.quantum_info import SparsePauliOp, Operator, Pauli
+from qiskit.circuit.library import PauliEvolutionGate
+from qiskit.quantum_info import Operator
+from qiskit.visualization import plot_histogram
+from qiskit.synthesis import LieTrotter
+from qiskit_aer import AerSimulator
+from IPython.display import display, Math
+from qiskit_ibm_runtime.fake_provider import FakeMarrakesh
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+X=Operator(Pauli("X")).data
+Y=Operator(Pauli("Y")).data
+Z=Operator(Pauli("Z")).data
+I=np.eye(2,dtype=complex)
+
+sigma_plus=0.5*(X - 1j*Y)
+sigma_minus=0.5*(X + 1j*Y)
+
+n=8
+
+def creop(position):
+    ops=[Z]*position + [sigma_plus] + [I]*(n-position-1)
+    full=ops[0]
+    for o in ops[1:]:
+        full=np.kron(full,o)
+    return full
+
+def aniop(position):
+    ops=[Z]*position + [sigma_minus] + [I]*(n-position-1)
+    full=ops[0]
+    for o in ops[1:]:
+        full=np.kron(full,o)
+    return full
+    
+H=(np.pi/4)*(creop(0)@aniop(4) + creop(4)@aniop(0) +creop(1)@aniop(5) +creop(5)@aniop(1) 
+             +creop(2)@aniop(6) +creop(6)@aniop(2) +creop(3)@aniop(7) +creop(7)@aniop(3) )
+
+H_P= SparsePauliOp.from_operator(Operator(H))
+H_P=H_P.simplify()
+print(H_P)
+
+def initial_state(theta):
+    zeta=np.cos(theta/2)
+    xi= -np.sin(theta/2)
+    initial_op= (1/np.sqrt(2))*((zeta*(creop(0)@creop(6)- creop(2)@creop(4))+ xi*(creop(0)@creop(7)- creop(2)@creop(5))))
+    vac=np.zeros(2**n, dtype=complex)
+    vac[0]=1.0
+    statevec=initial_op@vac
+    return statevec
+
+def HOMdip_circuit(theta):
+    qc=QuantumCircuit(8,8)
+    qc.initialize(initial_state(theta),range(8))
+    qc.barrier()
+    evolution= PauliEvolutionGate(H_P,time=1,label="U_B")
+    qc.append(evolution,range(n))
+    qc.barrier()
+    qc.measure(range(n),range(n))
+    return qc
+
+COINC= ['00010001', '00010010', '00010100', '00011000',
+    '00100001', '00100010', '00100100', '00101000',
+    '01000001', '01000010', '01000100', '01001000',
+    '10000001', '10000010', '10000100', '10001000']
+
+
+backend=AerSimulator()
+#backend=FakeMarrakesh()
+
+thetas = np.linspace(-np.pi, np.pi, 100)
+shots =10000
+
+coinc = []
+
+for th in thetas:
+    t = transpile(HOMdip_circuit( theta=th))    
+    c = backend.run(t, shots=shots).result().get_counts()
+    coinc.append(sum(c.get(s, 0) for s in COINC) / shots)
+
+plt.plot(thetas, coinc, 'o', label="HOM coincidence")
+plt.xlabel(r"$\theta$")
+plt.plot(thetas, np.sin(thetas/2)**2/2, 'k--', label=r"theory $\cos^2\theta/2$")
+
+plt.ylabel("Coincidence probability")
+plt.show()
+
+
