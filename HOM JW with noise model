@@ -1,0 +1,114 @@
+##HOM JW with noise model
+
+import numpy as np
+from qiskit import QuantumCircuit, transpile
+from qiskit.quantum_info import SparsePauliOp, Operator, Pauli
+from qiskit.circuit.library import PauliEvolutionGate
+from qiskit.quantum_info import Operator
+from qiskit.visualization import plot_histogram
+from qiskit.synthesis import LieTrotter
+from qiskit_aer import AerSimulator
+from IPython.display import display, Math
+import matplotlib.pyplot as plt
+%matplotlib inline
+from qiskit import QuantumCircuit, transpile
+from qiskit.visualization import plot_histogram
+from qiskit_aer import AerSimulator
+from qiskit_aer.noise import NoiseModel, depolarizing_error, \
+    amplitude_damping_error, phase_damping_error, ReadoutError
+
+X=Operator(Pauli("X")).data
+Y=Operator(Pauli("Y")).data
+Z=Operator(Pauli("Z")).data
+I=np.eye(2,dtype=complex)
+
+sigma_plus=0.5*(X - 1j*Y)
+sigma_minus=0.5*(X + 1j*Y)
+
+b11cr=np.kron(np.kron(np.kron(sigma_plus,I),I),I)
+b11an=np.kron(np.kron(np.kron(sigma_minus,I),I),I) 
+
+b12cr=np.kron(np.kron(np.kron(Z,sigma_plus),I),I)
+b12an=np.kron(np.kron(np.kron(Z,sigma_minus),I),I)
+
+b21cr=np.kron(np.kron(np.kron(Z,Z),sigma_plus),I)
+b21an=np.kron(np.kron(np.kron(Z,Z),sigma_minus),I)
+
+b22cr=np.kron(np.kron(np.kron(Z,Z),Z),sigma_plus)
+b22an=np.kron(np.kron(np.kron(Z,Z),Z),sigma_minus)
+
+H=(np.pi/4) * (b11cr@b21an + b21cr@b11an + b12cr@b22an + b22cr@b12an)
+
+H_P= SparsePauliOp.from_operator(Operator(H))
+H_P=H_P.simplify()
+print(H_P)
+
+def BScircuit():
+    qc=QuantumCircuit(4,4)
+    qc.x(1)
+    qc.x(2)
+    qc.h(0)
+    qc.z(0)
+    qc.cx(0,1)
+    qc.cx(0,2)
+    qc.cx(0,3)
+    evolution= PauliEvolutionGate(H_P,time=1,label="U_B")
+    qc.append(evolution,[0,1,2,3])
+    qc.measure(range(4),range(4))
+    return qc
+    
+
+relaxation_time   = 167e-6
+dephasing_time    = 214e-6
+
+single_qubit_gate_duration = 25e-9
+two_qubit_gate_duration    = 670e-9
+
+measurement_flip_prob = 0.0564
+two_qubit_depol_rate  = 0.00234
+
+noise_model = NoiseModel()
+
+gamma_1q  = 1 - np.exp(-single_qubit_gate_duration / relaxation_time)
+lambda_1q = 1 - np.exp(-single_qubit_gate_duration / dephasing_time)
+
+
+confusion = [
+    [1 - measurement_flip_prob, measurement_flip_prob],
+    [measurement_flip_prob,     1 - measurement_flip_prob],
+]
+noise_model.add_all_qubit_readout_error(ReadoutError(confusion))
+single_qubit_channel = (
+    amplitude_damping_error(gamma_1q)
+    .compose(phase_damping_error(lambda_1q))
+)
+noise_model.add_all_qubit_quantum_error(single_qubit_channel, ["h"])
+
+gamma_2q  = 1 - np.exp(-two_qubit_gate_duration / relaxation_time)
+lambda_2q = 1 - np.exp(-two_qubit_gate_duration / dephasing_time)
+
+thermal_2q = (
+    amplitude_damping_error(gamma_2q)
+    .tensor(amplitude_damping_error(gamma_2q))
+    .compose(
+        phase_damping_error(lambda_2q)
+        .tensor(phase_damping_error(lambda_2q))
+    )
+)
+noise_model.add_all_qubit_quantum_error(
+    depolarizing_error(two_qubit_depol_rate, 2).compose(thermal_2q), ["cx"]
+)
+
+
+backend = AerSimulator(noise_model=noise_model)
+
+
+
+compiled_circuit=transpile(BScircuit(), backend)
+job = backend.run(compiled_circuit, shots=10000)
+    
+result = job.result()
+counts = result.get_counts()
+print(counts)     
+plot_histogram(counts, title="Simulation Result")
+plt.show()
