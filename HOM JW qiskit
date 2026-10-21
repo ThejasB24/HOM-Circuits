@@ -1,0 +1,65 @@
+## HOM JW qiskit
+
+import numpy as np
+from qiskit import QuantumCircuit, transpile
+from qiskit.quantum_info import SparsePauliOp, Operator, Pauli
+from qiskit.circuit.library import PauliEvolutionGate
+from qiskit.quantum_info import Operator
+from qiskit.visualization import plot_histogram
+from qiskit.synthesis import LieTrotter
+from qiskit_aer import AerSimulator
+from IPython.display import display, Math
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+X=Operator(Pauli("X")).data
+Y=Operator(Pauli("Y")).data
+Z=Operator(Pauli("Z")).data
+I=np.eye(2,dtype=complex)
+
+sigma_plus=0.5*(X - 1j*Y)
+sigma_minus=0.5*(X + 1j*Y)
+
+b11cr=np.kron(np.kron(np.kron(sigma_plus,I),I),I)
+b11an=np.kron(np.kron(np.kron(sigma_minus,I),I),I) 
+
+b12cr=np.kron(np.kron(np.kron(Z,sigma_plus),I),I)
+b12an=np.kron(np.kron(np.kron(Z,sigma_minus),I),I)
+
+b21cr=np.kron(np.kron(np.kron(Z,Z),sigma_plus),I)
+b21an=np.kron(np.kron(np.kron(Z,Z),sigma_minus),I)
+
+b22cr=np.kron(np.kron(np.kron(Z,Z),Z),sigma_plus)
+b22an=np.kron(np.kron(np.kron(Z,Z),Z),sigma_minus)
+
+H=(np.pi/4) * (b11cr@b21an + b21cr@b11an + b12cr@b22an + b22cr@b12an)
+
+H_P= SparsePauliOp.from_operator(Operator(H))
+H_P=H_P.simplify()
+print(H_P)
+
+def initial_state():
+    initial_op= (1/np.sqrt(2))*(b11cr@b22cr-b12cr@b21cr)
+    vac=np.zeros(16, dtype=complex)
+    vac[0]=1.0
+    statevec=initial_op@vac
+    return statevec
+
+def BScircuit():
+    qc=QuantumCircuit(4,4)
+    qc.initialize(initial_state(),range(4))
+    qc.barrier()
+    evolution= PauliEvolutionGate(H_P,time=1,label="U_B")
+    qc.append(evolution,[0,1,2,3])
+    qc.measure(range(4),range(4))
+    return qc
+    
+backend=AerSimulator()
+compiled_circuit=transpile(BScircuit(), backend)
+job = backend.run(compiled_circuit, shots=10000)
+    
+result = job.result()
+counts = result.get_counts()
+print(counts)     
+plot_histogram(counts, title="Simulation Result")
+plt.show()
